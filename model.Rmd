@@ -1,0 +1,115 @@
+---
+title: "model"
+author: "Rodolfo Viana"
+date: "19-01-2016"
+output: html_document
+---
+
+Para a criação do modelo utilizei a biblioteca h2o, por se tratar de um open-source software para big-data analysis. O h2o é bastante rápido e flexível, podendo assim ser possível carregar uma grande quantidade de dados. Faz parte de uma comunidade que vem crescendo cada dia mais.
+ 
+```{r, warning=FALSE, message=FALSE, fig.align='center', echo=FALSE}
+# bibliotecas
+library(h2o)
+ 
+conn <- h2o.init(nthreads = -1)
+```
+
+Inicialmente vamos dividir o dataset entre o dataset de treino e validação. Essa divisão é importante por evita o overfitting, que ocorre quando um modelo estatístico super se adapta ao conjunto treinado, dessa forma quando o modelo recebe um valor pelo o qual ele não foi treinado, ele vai gerar uma predição muito ruim. É importante essa divisão entre treino e validação para verificar em qual ponto o modelo começa a sofrer overfitting.
+ 
+```{r, warning=FALSE, message=FALSE, fig.align='center', echo=FALSE}
+# Importando arquivo no h2o
+path_input <- "/home/rodolfo/Projetos/Nubank Puzzle/train.csv"
+data <- h2o.importFile(path = path_input, destination_frame = "train.hex", header = TRUE)
+ 
+# Divide o data frame em dois. Treino 80 %/ validação  20%
+data.split <- h2o.splitFrame(data = data , ratios = 0.80)
+ 
+# Treino
+data.train <- data.split[[1]]
+ 
+# Validação
+data.validacao <- data.split[[2]]
+```
+
+A minha estratégia é primeiro achar o melhor modelo que encontre a quantidade diária que será vendida para cada produto, e só depois encontrar o melhor modelo que encontre o preço diário desse produto.
+ 
+Vamos inicialmente trabalhar com os modelos GBM, random florest e GLM. O ideal seria inicialmente rodar todos os modelos com um grande número de árvores, grande profundidade e uma taxa de aprendizado pequena por interação, porém isso leva um tempo grande na minha máquina atual (com apenas 4GB)
+ 
+```{r, warning=FALSE, message=FALSE, fig.align='center', echo=FALSE}
+# Coluna que se deseja prever
+myY <- "target"
+ 
+# Coluna que deve ser ignorada pelo modelo
+ignored_columns <- "id"
+ 
+myX <- setdiff(setdiff(names(data.train), myY), ignored_columns)
+ 
+# GBM
+gbm <- h2o.gbm(x = myX, build_tree_one_node = T,
+            y = myY,
+            training_frame    = data.train,
+            validation_frame  = data.validacao,
+            ntrees            = 100,
+            max_depth         = 6,
+            learn_rate        = 0.1)
+ 
+# DRF
+drf <- h2o.randomForest(x = myX,
+                     y = myY,
+                     training_frame    = data.train,
+                     validation_frame  = data.validacao,
+                     ntrees            = 50,
+                     max_depth         = 30)
+ 
+# GLM
+glm <- h2o.glm(x = myX,
+            y = myY,
+            training_frame    = data.train,
+            validation_frame  = data.validacao,
+            lambda            = 1e-5,
+            family            = "poisson")
+ 
+# Score de cada modelo
+train_r2_gbm <- h2o.r2(gbm)
+test_r2_gbm  <- h2o.r2(gbm, valid = TRUE)
+ 
+train_r2_drf <- h2o.r2(drf)
+test_r2_drf  <- h2o.r2(drf, valid = TRUE)
+ 
+train_r2_glm <- h2o.r2(glm)
+test_r2_glm  <- h2o.r2(glm, valid = TRUE)
+ 
+df <- data.frame(Rsquared = c(train_r2_gbm, test_r2_gbm, train_r2_drf, test_r2_drf, train_r2_glm, test_r2_glm),
+                        tipo = c("train", "validation", "train", "validation", "train", "validation"),
+                        modelo = c("GBM","GBM","RF", "RF","GLM", "GLM"))
+```
+
+```{r, warning=FALSE, message=FALSE, fig.align='center', echo=FALSE}
+ggplot(data=df, aes(x = modelo, y = Rsquared, fill = tipo)) +
+ geom_bar(stat="identity", position=position_dodge()) +
+ theme_classic() +
+ labs(title = "Comparando os modelos") +
+ theme(axis.ticks = element_blank())
+```
+ 
+É possível notar que o Random Florest teve um melhor resultado do que os outros modelos, obtendo assim um Rsquared maior, então optamos por escolher o Random Florest para o caso da predição da quantidade de vendas de produtos.
+ 
+Como o Random Florest foi o escolhido, é interessante observar como se deu o treinamento ao longo das criações das árvores. Para evitar o overfitting dividimos os dados de treino em treino e validação. Dessa forma podemos observar o exato momento em que o modelo passa a sofrer o overfitting.
+
+```{r}
+# Importanto arquivo de teste no H2O
+path_test <- "/home/rodolfo/Projetos/Nubank Puzzle/test.csv"
+data_test <- h2o.importFile(path = path_test, destination_frame = "test.hex", header = TRUE)
+ 
+target = h2o.predict(object = gbm, newdata = data_test)
+h2o.exportFile(target, path = "/home/rodolfo/Projetos/Nubank Puzzle/predict.csv")
+```
+
+
+```{r}
+predictions <- read.table("~/Projetos/Nubank Puzzle/predictions_adb1_GBM_model_R_1453204201383_21_on_test.csv", header=TRUE, quote="\"")
+
+test <- read.csv("~/Projetos/Nubank Puzzle/test.csv", header = TRUE)
+
+t <- data.frame(id = test$id, prediction = predictions$predict)
+```
