@@ -10,6 +10,8 @@ To create the model, I used the h2o library, because it is an open-source softwa
 ```{r, warning=FALSE, message=FALSE, fig.align='center', echo=FALSE}
 # library
 library(h2o) 
+library(ggplot2)
+
 conn <- h2o.init(nthreads = -1)
 ```
 
