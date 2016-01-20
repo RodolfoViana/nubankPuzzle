@@ -5,41 +5,39 @@ date: "19-01-2016"
 output: html_document
 ---
 
-Para a criação do modelo utilizei a biblioteca h2o, por se tratar de um open-source software para big-data analysis. O h2o é bastante rápido e flexível, podendo assim ser possível carregar uma grande quantidade de dados. Faz parte de uma comunidade que vem crescendo cada dia mais.
+To create the model, I used the h2o library, because it is an open-source software for big-data analysis. The h2o is quite fast, flexible, and can carry a large amount of data. It is part of a community that is growing every day.
  
 ```{r, warning=FALSE, message=FALSE, fig.align='center', echo=FALSE}
-# bibliotecas
-library(h2o)
- 
+# library
+library(h2o) 
 conn <- h2o.init(nthreads = -1)
 ```
 
-Inicialmente vamos dividir o dataset entre o dataset de treino e validação. Essa divisão é importante por evita o overfitting, que ocorre quando um modelo estatístico super se adapta ao conjunto treinado, dessa forma quando o modelo recebe um valor pelo o qual ele não foi treinado, ele vai gerar uma predição muito ruim. É importante essa divisão entre treino e validação para verificar em qual ponto o modelo começa a sofrer overfitting.
+Initially we split the dataset from the training and validation dataset. This division is important for avoiding the overfitting, which occurs when a super statistical model adapts to the trained set, thus when the model receives a value for which it has not been trained, it will generate a very bad prediction. It is important this division between training and validation to check at what point the model begins to suffer overfitting.
  
 ```{r, warning=FALSE, message=FALSE, fig.align='center', echo=FALSE}
-# Importando arquivo no h2o
-path_input <- "/home/rodolfo/Projetos/Nubank Puzzle/train.csv"
+# Loading files
+path_input <- "train.csv"
 data <- h2o.importFile(path = path_input, destination_frame = "train.hex", header = TRUE)
  
-# Divide o data frame em dois. Treino 80 %/ validação  20%
+# Split the data frame. Train 80 %/ Validation  20%
 data.split <- h2o.splitFrame(data = data , ratios = 0.80)
  
-# Treino
+# Train
 data.train <- data.split[[1]]
  
-# Validação
+# Validation
 data.validacao <- data.split[[2]]
 ```
 
-A minha estratégia é primeiro achar o melhor modelo que encontre a quantidade diária que será vendida para cada produto, e só depois encontrar o melhor modelo que encontre o preço diário desse produto.
- 
-Vamos inicialmente trabalhar com os modelos GBM, random florest e GLM. O ideal seria inicialmente rodar todos os modelos com um grande número de árvores, grande profundidade e uma taxa de aprendizado pequena por interação, porém isso leva um tempo grande na minha máquina atual (com apenas 4GB)
+My strategy is to first find the best model
+We will initially work with GBM models, random forest and GLM. Ideally initially run all models with a large number of trees, great depth and a small learning rate for interaction, but it takes a lot of time on my current machine (with only 4GB)
  
 ```{r, warning=FALSE, message=FALSE, fig.align='center', echo=FALSE}
-# Coluna que se deseja prever
+# Target
 myY <- "target"
  
-# Coluna que deve ser ignorada pelo modelo
+# Ignored Columns
 ignored_columns <- "id"
  
 myX <- setdiff(setdiff(names(data.train), myY), ignored_columns)
@@ -69,7 +67,7 @@ glm <- h2o.glm(x = myX,
             lambda            = 1e-5,
             family            = "poisson")
  
-# Score de cada modelo
+# R2 each model 
 train_r2_gbm <- h2o.r2(gbm)
 test_r2_gbm  <- h2o.r2(gbm, valid = TRUE)
  
@@ -80,36 +78,35 @@ train_r2_glm <- h2o.r2(glm)
 test_r2_glm  <- h2o.r2(glm, valid = TRUE)
  
 df <- data.frame(Rsquared = c(train_r2_gbm, test_r2_gbm, train_r2_drf, test_r2_drf, train_r2_glm, test_r2_glm),
-                        tipo = c("train", "validation", "train", "validation", "train", "validation"),
-                        modelo = c("GBM","GBM","RF", "RF","GLM", "GLM"))
+                        type = c("train", "validation", "train", "validation", "train", "validation"),
+                        model = c("GBM","GBM","RF", "RF","GLM", "GLM"))
 ```
 
 ```{r, warning=FALSE, message=FALSE, fig.align='center', echo=FALSE}
-ggplot(data=df, aes(x = modelo, y = Rsquared, fill = tipo)) +
+ggplot(data=df, aes(x = model, y = Rsquared, fill = type)) +
  geom_bar(stat="identity", position=position_dodge()) +
  theme_classic() +
- labs(title = "Comparando os modelos") +
+ labs(title = "Models") +
  theme(axis.ticks = element_blank())
 ```
  
-É possível notar que o Random Florest teve um melhor resultado do que os outros modelos, obtendo assim um Rsquared maior, então optamos por escolher o Random Florest para o caso da predição da quantidade de vendas de produtos.
- 
-Como o Random Florest foi o escolhido, é interessante observar como se deu o treinamento ao longo das criações das árvores. Para evitar o overfitting dividimos os dados de treino em treino e validação. Dessa forma podemos observar o exato momento em que o modelo passa a sofrer o overfitting.
+It can see that the WBG had a better result than the other models, thus obtaining a greater Rsquared.
+As the GBM was chosen, it is interesting to observe how was the training along the creations of trees. To avoid overfitting divided the training data in training and validation. Thus we can see the exact moment that the model starts to suffer the overfitting.
 
 ```{r}
-# Importanto arquivo de teste no H2O
-path_test <- "/home/rodolfo/Projetos/Nubank Puzzle/test.csv"
+# Loading test
+path_test <- "test.csv"
 data_test <- h2o.importFile(path = path_test, destination_frame = "test.hex", header = TRUE)
  
 target = h2o.predict(object = gbm, newdata = data_test)
-h2o.exportFile(target, path = "/home/rodolfo/Projetos/Nubank Puzzle/predict.csv")
+h2o.exportFile(target, path = "predict.csv")
 ```
 
 
 ```{r}
-predictions <- read.table("~/Projetos/Nubank Puzzle/predictions_adb1_GBM_model_R_1453204201383_21_on_test.csv", header=TRUE, quote="\"")
+predictions <- read.table("predict.csv", header=TRUE, quote="\"")
+test <- read.csv("test.csv", header = TRUE)
+output <- data.frame(id = test$id, prediction = predictions$predict)
 
-test <- read.csv("~/Projetos/Nubank Puzzle/test.csv", header = TRUE)
-
-t <- data.frame(id = test$id, prediction = predictions$predict)
+write.csv(output, file = "final_predict.csv", row.names = FALSE)
 ```
